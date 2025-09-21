@@ -607,7 +607,7 @@
         }
 
         .reel.playing .spokes {
-            animation: rotate-counter-clockwise 3s linear infinite;
+            animation: rotate-counter-clockwise 5s linear infinite;
         }
     </style>
 </head>
@@ -734,7 +734,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const progressBar = document.getElementById('progressBar');
     const progress = document.getElementById('progress');
     const timeDisplay = document.getElementById('timeDisplay');
-    // const songInfo = document.getElementById('songInfo'); // Removed from this fix as it was commented out previously
     const leftReel = document.getElementById('leftReel');
     const rightReel = document.getElementById('rightReel');
     const volumeSlider = document.getElementById('volumeSlider');
@@ -758,10 +757,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let isPoweredOn = false; 
     let rampUpAnimationId = null; 
     
+    let visualAnimationId = null; 
+    
     let pressTimer;
     const LONG_PRESS_THRESHOLD = 300; 
 
-    // --- TRACK SKIPPING FUNCTIONS (Unchanged from last version) ---
+    // --- TRACK SKIPPING FUNCTIONS ---
     function skipToNextTrack() {
         if (!isPoweredOn || currentPlaylist.length === 0) return;
         const newIndex = (currentTrackIndex + 1) % currentPlaylist.length;
@@ -781,7 +782,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadTrack(newIndex);
     }
     
-    // --- POWER CONTROL (Unchanged) ---
+    // --- POWER CONTROL ---
     function setControlsState(enabled) {
         document.querySelectorAll('.controls .control-section, .file-label, .volume-slider, .progress-bar, .vfd-display, .progress-volume-group').forEach(el => {
             el.style.pointerEvents = enabled ? 'auto' : 'none';
@@ -803,12 +804,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (audioContext) {
                 audioContext.resume();
             }
-            // MODIFIED: If playlist is not empty, load the current track upon power-on.
             if (currentPlaylist.length > 0 && !audioPlayer.src) {
-                loadTrack(currentTrackIndex);
+                loadTrack(0, false); 
             } else {
                 updateTapeThickness(audioPlayer.duration ? audioPlayer.currentTime / audioPlayer.duration : 0);
             }
+            if (currentPlaylist.length > 0 && audioPlayer.src && audioPlayer.paused) {
+                 if (visualAnimationId === null) updateVisuals();
+            }
+
 
         } else {
             if(tapePlayer) tapePlayer.classList.add('power-off');
@@ -832,10 +836,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if(rightReel) rightReel.classList.remove('playing');
             
             updateReelSpeeds(); 
-            // Do not reset currentTime, just set thickness to 0 visually
             updateTapeThickness(0); 
             if(vuLeft) vuLeft.style.width = '0%';
             if(vuRight) vuRight.style.width = '0%';
+            
+            if (visualAnimationId) { 
+                cancelAnimationFrame(visualAnimationId); 
+                visualAnimationId = null; 
+            }
         }
     }
 
@@ -843,7 +851,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setControlsState(false);
     if(powerBtn) powerBtn.addEventListener('click', togglePower);
 
-    // --- TAPE THICKNESS LOGIC (Unchanged) ---
+    // --- TAPE THICKNESS LOGIC ---
     function updateTapeThickness(progressRatio) {
         const MIN_VISUAL_RATIO = 0.25; 
         const MAX_VISUAL_RATIO = 0.95; 
@@ -866,8 +874,26 @@ document.addEventListener('DOMContentLoaded', () => {
         if(rightReel) rightReel.style.setProperty('--tape-fill-ratio', rightTapeSize.toFixed(3));
     }
 
+    // --- VISUAL UPDATE LOOP ---
+    function updateVisuals() {
+        const isAnimationActive = leftReel?.classList.contains('playing') || 
+                                  rightReel?.classList.contains('playing');
 
-    // --- AUDIO & UI FUNCTIONS (Unchanged) ---
+        if (!isPoweredOn || !audioPlayer || !audioPlayer.src || !isAnimationActive) {
+            if (visualAnimationId) { cancelAnimationFrame(visualAnimationId); visualAnimationId = null; }
+            return; 
+        }
+
+        if (audioPlayer.duration) {
+            const progressRatio = audioPlayer.currentTime / audioPlayer.duration;
+            updateTapeThickness(progressRatio); 
+        }
+        
+        visualAnimationId = requestAnimationFrame(updateVisuals);
+    }
+    // --- END VISUAL UPDATE LOOP
+
+    // --- AUDIO & UI FUNCTIONS ---
     function initAudioContext() {
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -920,23 +946,29 @@ document.addEventListener('DOMContentLoaded', () => {
         const isAudioPlaying = !audioPlayer.paused && audioPlayer.src;
         const isAnimationActive = isAudioPlaying || isSeeking || (rampUpAnimationId !== null); 
 
+        let leftSpokes = leftReel?.querySelector('.spokes');
+        let rightSpokes = rightReel?.querySelector('.spokes');
+
         if (audioPlayer.duration && isAnimationActive) {
             let currentRate = audioPlayer.playbackRate;
 
-            let leftSpokes = leftReel?.querySelector('.spokes');
-            let rightSpokes = rightReel?.querySelector('.spokes');
-            
             if(leftReel) leftReel.classList.add('playing');
             if(rightReel) rightReel.classList.add('playing');
 
+            // Direction logic is now partially overridden by the RAF ramp functions.
+            // This section only handles the speed and the active seek direction.
             if (isHighSpeedForwardMode || isHighSpeedRewindMode || rampUpAnimationId !== null) { 
                 if(leftSpokes) leftSpokes.style.animationDuration = (3 / currentRate) + 's';
                 if(rightSpokes) rightSpokes.style.animationDuration = (3 / currentRate) + 's';
                 
+                // Only set the direction here for active seek/ramp up.
                 if(leftSpokes) leftSpokes.style.animationDirection = isHighSpeedRewindMode ? 'reverse' : 'normal';
                 if(rightSpokes) rightSpokes.style.animationDirection = isHighSpeedRewindMode ? 'reverse' : 'normal';
 
             } else {
+                // Normal playback speed logic
+                
+                // For normal playback, direction is always 'normal'.
                 if(leftSpokes) leftSpokes.style.animationDirection = 'normal';
                 if(rightSpokes) rightSpokes.style.animationDirection = 'normal';
 
@@ -954,14 +986,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if(leftReel) leftReel.classList.remove('playing');
             if(rightReel) rightReel.classList.remove('playing');
             
-            if (leftReel?.querySelector('.spokes')) {
-                leftReel.querySelector('.spokes').style.animationDuration = '0s';
-                rightReel.querySelector('.spokes').style.animationDuration = '0s';
-            }
+            if (leftSpokes) leftSpokes.style.animationDuration = '0s';
+            if (rightSpokes) rightSpokes.style.animationDuration = '0s';
         }
     }
     
-    // --- PLAYLIST / LOADING ---
+    // --- PLAYLIST / LOADING (No critical changes) ---
     if(fileInput) {
         fileInput.addEventListener('change', function(e) {
             if (!isPoweredOn) return; 
@@ -978,9 +1008,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 });
                 updatePlaylistDisplay();
-                // MODIFIED: Only auto-load if no track is currently loaded.
                 if (currentPlaylist.length > 0 && !audioPlayer.src) {
-                    loadTrack(0, false); // Load track 0, but don't auto-play
+                    loadTrack(0, false);
                 }
             }
         });
@@ -1010,15 +1039,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
-        // MODIFIED: Only attempt to play if autoPlay is true.
         if (autoPlay) {
-             // Ensure audio context is resumed for playback
             setTimeout(() => {
                 initAudioContext();
                 audioContext?.resume().then(rampUpToPlay);
             }, 100);
         } else {
-            // If not auto-playing, ensure button state is correct
             if(playBtn) {
                 playBtn.textContent = '▶️';
                 playBtn.classList.remove('playing');
@@ -1056,7 +1082,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // MODIFIED: Updated removeTrack to stop playback if current track is removed
     function removeTrack(index) { 
         
         const wasCurrentTrack = index === currentTrackIndex;
@@ -1073,13 +1098,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 updateTapeThickness(0);
             } else {
-                // If the removed track was the current one, load the next one (or first one)
                 const newIndex = index >= currentPlaylist.length ? currentPlaylist.length - 1 : index;
                 currentTrackIndex = newIndex;
-                loadTrack(newIndex, audioPlayer && !audioPlayer.paused); // Continue playing if it was playing
+                loadTrack(newIndex, audioPlayer && !audioPlayer.paused); 
             }
         } else if (index < currentTrackIndex) {
-            // Shift index if a track before the current one was removed
             currentTrackIndex--;
         }
         
@@ -1091,11 +1114,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if(playBtn) {
         playBtn.addEventListener('click', function() {
-            // FIX: Ensure a track is loaded before attempting to play
             if (!isPoweredOn || currentPlaylist.length === 0 || !audioPlayer?.src) {
-                // Flash the power or display an error if no tracks are loaded
                 if (isPoweredOn && currentPlaylist.length === 0) {
-                    // Optional: Visual feedback for "no media"
                     console.log("No track loaded."); 
                 }
                 return; 
@@ -1111,6 +1131,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 playBtn.classList.remove('playing');
                 if(leftReel) leftReel.classList.remove('playing');
                 if(rightReel) rightReel.classList.remove('playing');
+                if (visualAnimationId) { cancelAnimationFrame(visualAnimationId); visualAnimationId = null; }
             }
         });
     }
@@ -1122,7 +1143,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (stopRampAnimationId) { cancelAnimationFrame(stopRampAnimationId); stopRampAnimationId = null; }
         if (rampUpAnimationId) { cancelAnimationFrame(rampUpAnimationId); rampUpAnimationId = null; }
 
-        // FIX: Changed starting rate to 0.1, which is universally accepted
         audioPlayer.playbackRate = 0.1; 
         audioPlayer.preservesPitch = false;
         audioPlayer.play();
@@ -1135,6 +1155,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if(rightReel) rightReel.classList.add('playing');
         
         updateVUMeters();
+        
+        if (visualAnimationId === null) updateVisuals();
         
         const startRate = audioPlayer.playbackRate; 
         const targetRate = 1.0;
@@ -1165,6 +1187,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- END RAMP UP FUNCTION ---
 
 
+    // --- RAMP DOWN TO STOP FUNCTION (FIXED) ---
     function rampDownToStop() {
         if (!isPoweredOn || !audioPlayer) return; 
 
@@ -1196,6 +1219,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const currentRate = startRate + (targetRate - startRate) * progress;
             audioPlayer.playbackRate = Math.max(0.001, currentRate); 
             audioPlayer.preservesPitch = false; 
+
+            // FIX: Explicitly lock direction to 'normal' (forward) during ramp down to stop
+            const leftSpokes = leftReel?.querySelector('.spokes');
+            const rightSpokes = rightReel?.querySelector('.spokes');
+            if(leftSpokes) leftSpokes.style.animationDirection = 'normal';
+            if(rightSpokes) rightSpokes.style.animationDirection = 'normal';
+            
             updateReelSpeeds();
 
             if (progress < 1) {
@@ -1232,12 +1262,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 cancelAnimationFrame(stopRampAnimationId);
                 stopRampAnimationId = null;
             }
+            if (visualAnimationId) { cancelAnimationFrame(visualAnimationId); visualAnimationId = null; }
         }, duration); 
     }
+    // --- END RAMP DOWN TO STOP FUNCTION ---
 
     if(stopBtn) stopBtn.addEventListener('click', rampDownToStop);
 
-    // --- UTILITY FUNCTIONS & EVENT LISTENERS (Unchanged) ---
+    // --- UTILITY FUNCTIONS & EVENT LISTENERS ---
 
     if(progressBar) {
         progressBar.addEventListener('click', function(e) {
@@ -1272,8 +1304,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const duration = formatTime(audioPlayer.duration);
                 if(timeDisplay) timeDisplay.textContent = `${currentTime} / ${duration}`;
                 
-                updateTapeThickness(progressRatio);
-                
                 if (isHighSpeedForwardMode && audioPlayer.currentTime >= audioPlayer.duration) {
                     stopHighSpeedForwardMode();
                     audioPlayer.currentTime = audioPlayer.duration;
@@ -1288,6 +1318,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if(leftReel) leftReel.classList.remove('playing');
             if(rightReel) rightReel.classList.remove('playing');
+            
+            if (visualAnimationId) { cancelAnimationFrame(visualAnimationId); visualAnimationId = null; }
             
             if (currentTrackIndex < currentPlaylist.length - 1) {
                 loadTrack(currentTrackIndex + 1);
@@ -1310,7 +1342,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if(volumeFill) volumeFill.style.width = '70%'; 
     updateTapeThickness(0); 
     
-    // --- SEEKING/SKIPPING LOGIC (Unchanged) ---
+    // --- SEEKING/SKIPPING LOGIC ---
 
     if(forwardBtn) {
         forwardBtn.addEventListener('mousedown', startForwardPress);
@@ -1370,12 +1402,14 @@ document.addEventListener('DOMContentLoaded', () => {
         pressTimer = null;
     }
 
-    // --- REWIND & FORWARD FUNCTIONS (Unchanged) ---
+    // --- REWIND & FORWARD FUNCTIONS (FIXED) ---
     function startRewindHighSpeedMode() { 
         if (isHighSpeedRewindMode || !audioPlayer) return;
         if (stopRampAnimationId) { cancelAnimationFrame(stopRampAnimationId); stopRampAnimationId = null; }
         if (rampUpAnimationId) { cancelAnimationFrame(rampUpAnimationId); rampUpAnimationId = null; }
 
+        if (visualAnimationId === null) updateVisuals();
+        
         isHighSpeedRewindMode = true;
         if(forwardBtn) forwardBtn.classList.remove('playing'); 
         if(rewindBtn) rewindBtn.classList.add('playing');
@@ -1432,6 +1466,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const duration = 2000;
         const startTime = performance.now();
         
+        const leftSpokes = leftReel?.querySelector('.spokes');
+        const rightSpokes = rightReel?.querySelector('.spokes');
+
         if (wasPlayingBeforeSeek) {
             audioPlayer.play();
             if(playBtn) {
@@ -1439,6 +1476,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 playBtn.classList.add('playing');
             }
             updateVUMeters();
+        } else {
+             if (visualAnimationId) { cancelAnimationFrame(visualAnimationId); visualAnimationId = null; }
         }
 
         function step(timestamp) {
@@ -1447,13 +1486,20 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const currentRate = startRate + (targetRate - startRate) * progress;
             audioPlayer.playbackRate = currentRate;
-            updateReelSpeeds();
+            
+            // FIX: Explicitly lock direction to 'reverse' (backward) during ramp down
+            if(leftSpokes) leftSpokes.style.animationDirection = 'reverse';
+            if(rightSpokes) rightSpokes.style.animationDirection = 'reverse';
 
             if (progress === 1) {
                  audioPlayer.preservesPitch = true;
                  audioPlayer.playbackRate = targetRate;
-
-                 if (!wasPlayingBeforeSeek) {
+                 
+                 // FIX: Ensure direction switches back to 'normal' immediately after ramp if resuming playback
+                 if (wasPlayingBeforeSeek) {
+                    if(leftSpokes) leftSpokes.style.animationDirection = 'normal';
+                    if(rightSpokes) rightSpokes.style.animationDirection = 'normal';
+                 } else {
                      audioPlayer.pause();
                      if(playBtn) {
                          playBtn.textContent = '▶️';
@@ -1463,6 +1509,8 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                  audioPlayer.preservesPitch = false;
             }
+            
+            updateReelSpeeds();
             
             if (progress < 1) {
                 requestAnimationFrame(step);
@@ -1475,6 +1523,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isHighSpeedForwardMode || !audioPlayer?.src) return;
         if (stopRampAnimationId) { cancelAnimationFrame(stopRampAnimationId); stopRampAnimationId = null; }
         if (rampUpAnimationId) { cancelAnimationFrame(rampUpAnimationId); rampUpAnimationId = null; }
+
+        if (visualAnimationId === null) updateVisuals();
 
         isHighSpeedForwardMode = true;
         if(rewindBtn) rewindBtn.classList.remove('playing'); 
@@ -1489,7 +1539,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const startRate = audioPlayer.playbackRate > 1.0 ? audioPlayer.playbackRate : 1.0;
         const targetRate = 4.0;
-        const duration = 2000; 
+        const duration = 4000; 
         const startTime = performance.now();
 
         function step(timestamp) {
@@ -1522,6 +1572,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const targetRate = 1.0;
         const duration = 2000;
         const startTime = performance.now();
+
+        const leftSpokes = leftReel?.querySelector('.spokes');
+        const rightSpokes = rightReel?.querySelector('.spokes');
         
         if (wasPlayingBeforeSeek && audioPlayer.currentTime < audioPlayer.duration) {
             audioPlayer.play();
@@ -1530,6 +1583,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 playBtn.classList.add('playing');
             }
             updateVUMeters();
+        } else {
+             if (visualAnimationId) { cancelAnimationFrame(visualAnimationId); visualAnimationId = null; }
         }
 
         function step(timestamp) {
@@ -1539,6 +1594,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const currentRate = startRate + (targetRate - startRate) * progress;
             audioPlayer.playbackRate = currentRate;
             
+            // FIX: Explicitly lock direction to 'normal' (forward) during deceleration
+            if(leftSpokes) leftSpokes.style.animationDirection = 'normal';
+            if(rightSpokes) rightSpokes.style.animationDirection = 'normal';
+
             if (progress === 1) {
                 audioPlayer.preservesPitch = true;
                 audioPlayer.playbackRate = targetRate;
